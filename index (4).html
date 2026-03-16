@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Planificador RRSS</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', sans-serif; background: #f7f6f2; color: #1a1a1a; }
+    button, input, textarea { font-family: 'DM Sans', sans-serif; }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #f0f0f0; } ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+    .fade { animation: fi .2s ease; } @keyframes fi { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:none} }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { useState, useEffect } = React;
+
+  const PLAT = {
+    instagram: { label:"Instagram", color:"#E1306C", bg:"#fce4ec", icon:"📸", grad:"linear-gradient(135deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888)", url:"https://instagram.com/" },
+    linkedin:  { label:"LinkedIn",  color:"#0A66C2", bg:"#e3f2fd", icon:"💼", grad:"linear-gradient(135deg,#0077b5,#0A66C2,#004182)", url:"https://linkedin.com/in/" },
+  };
+  const ST_OPT = ["Idea","En redacción","Listo","Publicado"];
+  const ST_CLR = {"Idea":"#f0f0f0","En redacción":"#fff9c4","Listo":"#c8e6c9","Publicado":"#bbdefb"};
+  const ST_TXT = {"Idea":"#777","En redacción":"#795548","Listo":"#2e7d32","Publicado":"#1565c0"};
+  const CT = [{v:"image",l:"Imagen",i:"🖼️"},{v:"video",l:"Video",i:"🎬"},{v:"carousel",l:"Carrusel",i:"🎠"},{v:"text",l:"Solo texto",i:"✍️"}];
+  const DAYS = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+  const MON  = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+  const KP = "rrss_posts_v4", KA = "rrss_acc_v4";
+  const ld = k => { try{return JSON.parse(localStorage.getItem(k)||"null")}catch{return null} };
+  const sv = (k,v) => { try{localStorage.setItem(k,JSON.stringify(v))}catch{} };
+
+  // ── URL helpers ─────────────────────────────────────────────────────────────
+  function driveToImg(url) {
+    if (!url) return "";
+    if (url.includes("lh3.googleusercontent.com")) return url;
+    if (url.includes("drive.google.com/uc?")) return url;
+    const m1 = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (m1) return `https://lh3.googleusercontent.com/d/${m1[1]}`;
+    const m2 = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (m2) return `https://lh3.googleusercontent.com/d/${m2[1]}`;
+    return url;
+  }
+  const isDrive = u => u && u.includes("drive.google.com");
+  const isYT    = u => u && (u.includes("youtube.com")||u.includes("youtu.be"));
+  const ytThumb = u => { const m=u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?/]+)/); return m?`https://img.youtube.com/vi/${m[1]}/mqdefault.jpg`:null; };
+  const resolve = u => { if(!u)return ""; if(isDrive(u))return driveToImg(u); return u; };
+
+  const daysIn  = (y,m) => new Date(y,m+1,0).getDate();
+  const firstOf = (y,m) => new Date(y,m,1).getDay();
+  const EMPTY = {platform:"instagram",title:"",caption:"",status:"Idea",hashtags:"",ctype:"image",driveUrl:"",coverDriveUrl:""};
+
+  // ── Cover image component ──────────────────────────────────────────────────
+  function CoverImg({url, h=200, r=10}) {
+    const [err,setErr] = useState(false);
+    useEffect(()=>setErr(false),[url]);
+    if (!url) return null;
+    const src = resolve(url);
+    const yt  = isYT(url) ? ytThumb(url) : null;
+    const s   = {width:"100%",height:h,objectFit:"cover",borderRadius:r,display:"block"};
+    if (yt) return (
+      <div style={{position:"relative",borderRadius:r,overflow:"hidden",height:h}}>
+        <img src={yt} alt="" style={s} onError={()=>setErr(true)}/>
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.3)"}}>▶️</div>
+      </div>
+    );
+    if (!err) return <img src={src} alt="" style={s} onError={()=>setErr(true)} crossOrigin="anonymous"/>;
+    return (
+      <div style={{height:h,borderRadius:r,background:"#f0f0f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6}}>
+        <span style={{fontSize:26}}>🖼️</span>
+        <div style={{fontSize:10,color:"#aaa",textAlign:"center",padding:"0 10px"}}>
+          {isDrive(url)?"Asegurate que el archivo de Drive esté compartido como público":"No se pudo cargar"}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Drive input ────────────────────────────────────────────────────────────
+  function DrvField({label, value, onChange, ph}) {
+    const drive = isDrive(value);
+    return (
+      <div style={{marginBottom:10}}>
+        {label&&<div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:5}}>{label}</div>}
+        <input value={value} onChange={e=>onChange(e.target.value)} placeholder={ph||"Pegá el link de Drive..."}
+          style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1.5px solid ${drive?"#34a853":"#e0e0e0"}`,fontSize:12,outline:"none",background:"#fff"}}/>
+        {drive&&<div style={{fontSize:10,color:"#34a853",marginTop:3}}>✓ Link de Drive detectado — se mostrará automáticamente</div>}
+      </div>
+    );
+  }
+
+  // ── Settings modal ─────────────────────────────────────────────────────────
+  function Settings({acc, onSave, onClose}) {
+    const [ig,setIg]=useState(acc.instagram||"");
+    const [li,setLi]=useState(acc.linkedin||"");
+    return (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:16}} onClick={onClose}>
+        <div style={{background:"#fff",borderRadius:18,width:"min(400px,96vw)",padding:30,boxShadow:"0 24px 60px rgba(0,0,0,.2)"}} onClick={e=>e.stopPropagation()}>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:19,fontWeight:700,marginBottom:4}}>Vincular cuentas</div>
+          <div style={{fontSize:12,color:"#aaa",marginBottom:22}}>Accedé directo a tu perfil desde el planificador</div>
+          {[{k:"instagram",icon:"📸",color:"#E1306C",label:"Instagram",val:ig,set:setIg,base:"instagram.com/"},
+            {k:"linkedin", icon:"💼",color:"#0A66C2",label:"LinkedIn", val:li,set:setLi,base:"linkedin.com/in/"}].map(p=>(
+            <div key={p.k} style={{marginBottom:16}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#444",marginBottom:6}}>{p.icon} {p.label}</div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:13,color:"#aaa",fontWeight:600}}>@</span>
+                <input value={p.val} onChange={e=>p.set(e.target.value)} placeholder="tu_usuario"
+                  style={{flex:1,padding:"9px 12px",borderRadius:8,border:"1.5px solid #e0e0e0",fontSize:13,outline:"none"}}/>
+              </div>
+              {p.val&&<div style={{fontSize:10,color:p.color,marginTop:4}}>→ {p.base}{p.val.replace(/^@/,"")}</div>}
+            </div>
+          ))}
+          <div style={{display:"flex",gap:8,marginTop:20}}>
+            <button onClick={onClose} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #e0e0e0",background:"#fafafa",cursor:"pointer",fontWeight:600,fontSize:13}}>Cancelar</button>
+            <button onClick={()=>onSave({instagram:ig.replace(/^@/,"").trim(),linkedin:li.replace(/^@/,"").trim()})}
+              style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"#1a1a1a",color:"#fff",cursor:"pointer",fontWeight:700,fontSize:13}}>Guardar</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Feed tile ──────────────────────────────────────────────────────────────
+  function Tile({post,idx,onSelect,isDrag,isDragOver,onDragStart,onDragEnter,onDragEnd}) {
+    const [hov,setHov]=useState(false);
+    const [err,setErr]=useState(false);
+    const pl  = PLAT[post.platform];
+    const ct  = CT.find(c=>c.v===post.ctype);
+    const raw = post.coverDriveUrl||post.driveUrl;
+    const src = resolve(raw);
+    const yt  = raw&&isYT(raw)?ytThumb(raw):null;
+    return (
+      <div draggable onDragStart={()=>onDragStart(idx)} onDragEnter={()=>onDragEnter(idx)} onDragEnd={onDragEnd}
+        onClick={()=>onSelect(post)} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+        style={{position:"relative",aspectRatio:"1/1",borderRadius:2,overflow:"hidden",cursor:"pointer",background:"#f0f0f0",
+          outline:isDragOver?"3px dashed #1a1a1a":"none",opacity:isDrag?0.4:1,transition:"opacity .15s"}}>
+        {raw&&!err
+          ? yt
+            ? <img src={yt} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={()=>setErr(true)}/>
+            : <img src={src} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}} onError={()=>setErr(true)} crossOrigin="anonymous"/>
+          : <div style={{width:"100%",height:"100%",background:`linear-gradient(135deg,${pl.bg},#fff)`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <span style={{fontSize:32,opacity:.25}}>{ct?.i||pl.icon}</span>
+            </div>
+        }
+        <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.62)",opacity:hov?1:0,transition:"opacity .2s",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5,padding:8}}>
+          <div style={{color:"#fff",fontWeight:700,fontSize:11,textAlign:"center",lineHeight:1.3}}>{post.title}</div>
+          <div style={{color:"rgba(255,255,255,.65)",fontSize:9}}>{post.date}</div>
+          <div style={{padding:"2px 7px",borderRadius:20,background:ST_CLR[post.status],color:ST_TXT[post.status],fontSize:9,fontWeight:600}}>{post.status}</div>
+        </div>
+        <div style={{position:"absolute",top:5,left:5,background:"rgba(0,0,0,.6)",borderRadius:20,padding:"2px 6px",fontSize:9,color:"#fff",fontWeight:600}}>{pl.icon}</div>
+        <div style={{position:"absolute",bottom:5,right:5,background:"rgba(0,0,0,.6)",borderRadius:"50%",width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:700}}>{idx+1}</div>
+      </div>
+    );
+  }
+
+  // ── Feed generator ─────────────────────────────────────────────────────────
+  function Feed({posts, acc, onSelect}) {
+    const [plat,setPlat]=useState("instagram");
+    const [manual,setManual]=useState([]);
+    const [isMan,setIsMan]=useState(false);
+    const [dIdx,setDIdx]=useState(null);
+    const [dOver,setDOver]=useState(null);
+    const pl = PLAT[plat];
+    const filtered = posts.filter(p=>p.platform===plat).sort((a,b)=>new Date(a.date)-new Date(b.date));
+    useEffect(()=>{setManual(filtered.map(p=>p.id));setIsMan(false);},[plat,posts.length]);
+    const ordered = isMan?manual.map(id=>filtered.find(p=>p.id===id)).filter(Boolean):filtered;
+    function dragEnd(){
+      if(dIdx!==null&&dOver!==null&&dIdx!==dOver){
+        const arr=[...(isMan?manual:filtered.map(p=>p.id))];
+        const [m]=arr.splice(dIdx,1);arr.splice(dOver,0,m);
+        setManual(arr);setIsMan(true);
+      }
+      setDIdx(null);setDOver(null);
+    }
+    const handle = acc[plat];
+    const profUrl = handle?`${pl.url}${handle}`:null;
+    return (
+      <div style={{padding:"22px 28px 40px",maxWidth:680,margin:"0 auto"}} className="fade">
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,flexWrap:"wrap",gap:10}}>
+          <div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:21,fontWeight:700}}>Vista de Feed</div>
+            <div style={{fontSize:11,color:"#999",marginTop:2}}>Arrastrá para reordenar · hacé click para ver detalle</div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            {Object.entries(PLAT).map(([k,p])=>(
+              <button key={k} onClick={()=>setPlat(k)}
+                style={{padding:"6px 14px",borderRadius:24,border:`2px solid ${plat===k?p.color:"#e0e0e0"}`,background:plat===k?p.bg:"#fff",color:plat===k?p.color:"#888",fontWeight:700,fontSize:12,cursor:"pointer",transition:"all .2s"}}>
+                {p.icon} {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{background:"#fff",borderRadius:18,border:"1.5px solid #ebebeb",overflow:"hidden",boxShadow:"0 4px 20px rgba(0,0,0,.06)"}}>
+          {/* Header perfil */}
+          <div style={{padding:"16px 20px",display:"flex",alignItems:"center",gap:14,borderBottom:"1px solid #f0f0f0"}}>
+            <div style={{width:56,height:56,borderRadius:"50%",background:pl.grad,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0,boxShadow:"0 0 0 3px rgba(0,0,0,.08)"}}>
+              {pl.icon}
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:14,marginBottom:3}}>{handle?`@${handle}`:"tu_cuenta"}</div>
+              <div style={{display:"flex",gap:16,fontSize:12,color:"#666"}}>
+                <span><strong style={{color:"#1a1a1a"}}>{ordered.length}</strong> posts</span>
+                <span style={{color:"#ccc"}}>— seguidores</span>
+                <span style={{color:"#ccc"}}>— seguidos</span>
+              </div>
+            </div>
+            {profUrl
+              ? <a href={profUrl} target="_blank" rel="noopener noreferrer"
+                  style={{background:pl.grad,color:"#fff",borderRadius:8,padding:"7px 16px",fontSize:12,fontWeight:700,textDecoration:"none",flexShrink:0}}>
+                  Ver perfil ↗
+                </a>
+              : <div style={{borderRadius:8,padding:"7px 16px",fontSize:11,fontWeight:600,color:"#bbb",border:"1px solid #eee",flexShrink:0}}>Vincular cuenta →</div>
+            }
+          </div>
+
+          {/* Grid */}
+          {ordered.length===0
+            ? <div style={{padding:56,textAlign:"center",color:"#ccc"}}>
+                <div style={{fontSize:42,marginBottom:10}}>🖼️</div>
+                <div style={{fontSize:14,fontWeight:600,marginBottom:4}}>Sin publicaciones todavía</div>
+                <div style={{fontSize:12}}>Agregá posts con portada de Drive para {pl.label}</div>
+              </div>
+            : <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:3,padding:3}}>
+                {ordered.map((p,i)=>(
+                  <Tile key={p.id} post={p} idx={i} onSelect={onSelect}
+                    isDrag={dIdx===i} isDragOver={dOver===i}
+                    onDragStart={i=>setDIdx(i)} onDragEnter={i=>setDOver(i)} onDragEnd={dragEnd}/>
+                ))}
+                {Array.from({length:(3-(ordered.length%3))%3}).map((_,i)=>(
+                  <div key={`ph${i}`} style={{aspectRatio:"1/1",background:"#fafafa",border:"2px dashed #ebebeb",borderRadius:2,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <span style={{fontSize:16,opacity:.15}}>+</span>
+                  </div>
+                ))}
+              </div>
+          }
+        </div>
+
+        {ordered.length>0&&(
+          <div style={{display:"flex",gap:8,alignItems:"center",marginTop:10,flexWrap:"wrap"}}>
+            <div style={{fontSize:11,color:"#aaa",flex:1}}>{isMan?"🖱️ Orden manual":"📅 Por fecha"}</div>
+            {isMan&&<button onClick={()=>{setIsMan(false);setManual(filtered.map(p=>p.id));}} style={{fontSize:11,padding:"3px 10px",borderRadius:20,border:"1px solid #ddd",background:"#fafafa",cursor:"pointer",color:"#666"}}>Restablecer</button>}
+            {ST_OPT.map(s=>{const c=ordered.filter(p=>p.status===s).length;return c>0?(
+              <div key={s} style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#666",background:"#fff",borderRadius:20,padding:"3px 9px",border:"1px solid #ebebeb"}}>
+                <span style={{width:7,height:7,borderRadius:2,background:ST_CLR[s],display:"inline-block"}}/>
+                {s} ({c})
+              </div>
+            ):null;})}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Post modal ─────────────────────────────────────────────────────────────
+  function PostModal({modal, month, year, form, setForm, onSave, onClose}) {
+    const [tab,setTab]=useState("form");
+    const inp={width:"100%",padding:"9px 12px",borderRadius:8,border:"1.5px solid #e0e0e0",fontSize:13,outline:"none",boxSizing:"border-box"};
+    const coverPreview = form.coverDriveUrl||form.driveUrl;
+    return (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:16}} onClick={onClose}>
+        <div style={{background:"#fff",borderRadius:18,width:"min(720px,98vw)",maxHeight:"92vh",overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 32px 80px rgba(0,0,0,.25)"}} onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",background:"#fafafa",borderBottom:"1.5px solid #f0f0f0",borderRadius:"18px 18px 0 0"}}>
+            {[{id:"form",l:"✏️ Contenido"},{id:"preview",l:"👁️ Vista previa"}].map(t=>(
+              <button key={t.id} onClick={()=>setTab(t.id)}
+                style={{flex:1,padding:"12px",border:"none",background:tab===t.id?"#fff":"transparent",fontWeight:tab===t.id?700:400,fontSize:13,cursor:"pointer",color:tab===t.id?"#1a1a1a":"#999",borderBottom:tab===t.id?"2px solid #1a1a1a":"2px solid transparent"}}>
+                {t.l}
+              </button>
+            ))}
+          </div>
+
+          <div style={{overflow:"auto",flex:1}}>
+            {tab==="form"?(
+              <div style={{padding:"22px 26px"}}>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,fontWeight:700,marginBottom:16}}>
+                  {modal.editId?"Editar post":`Nuevo post — ${String(modal.day).padStart(2,"0")} ${MON[month]}`}
+                </div>
+
+                {/* Plataforma */}
+                <div style={{display:"flex",gap:8,marginBottom:12}}>
+                  {Object.entries(PLAT).map(([k,p])=>(
+                    <button key={k} onClick={()=>setForm(f=>({...f,platform:k}))}
+                      style={{flex:1,padding:"9px",border:`2px solid ${form.platform===k?p.color:"#e5e5e5"}`,borderRadius:10,cursor:"pointer",background:form.platform===k?p.bg:"#fafafa",fontWeight:600,fontSize:13,color:form.platform===k?p.color:"#888"}}>
+                      {p.icon} {p.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Tipo */}
+                <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+                  {CT.map(c=>(
+                    <button key={c.v} onClick={()=>setForm(f=>({...f,ctype:c.v}))}
+                      style={{padding:"5px 11px",borderRadius:20,border:`1.5px solid ${form.ctype===c.v?"#1a1a1a":"#e0e0e0"}`,background:form.ctype===c.v?"#1a1a1a":"#fafafa",color:form.ctype===c.v?"#fff":"#777",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                      {c.i} {c.l}
+                    </button>
+                  ))}
+                </div>
+
+                <input placeholder="Título *" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} style={{...inp,marginBottom:9,fontSize:14}}/>
+                <textarea placeholder="Caption / texto" value={form.caption} onChange={e=>setForm(f=>({...f,caption:e.target.value}))} rows={3} style={{...inp,marginBottom:9,resize:"vertical"}}/>
+                <input placeholder="#hashtags" value={form.hashtags} onChange={e=>setForm(f=>({...f,hashtags:e.target.value}))} style={{...inp,marginBottom:14}}/>
+
+                {/* Drive section — dos columnas */}
+                {form.ctype!=="text"&&(
+                  <div style={{background:"#f8f8f8",borderRadius:12,padding:14,marginBottom:14}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:12,textTransform:"uppercase",letterSpacing:.5}}>🔗 Archivos (Google Drive)</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,alignItems:"start"}}>
+                      <div>
+                        <DrvField
+                          label={form.ctype==="video"?"🎬 Link del video":"🖼️ Link imagen principal"}
+                          value={form.driveUrl}
+                          onChange={v=>setForm(f=>({...f,driveUrl:v}))}
+                          ph="https://drive.google.com/file/d/..."
+                        />
+                        <DrvField
+                          label="🎭 Link de portada (aparece en el Feed)"
+                          value={form.coverDriveUrl}
+                          onChange={v=>setForm(f=>({...f,coverDriveUrl:v}))}
+                          ph="https://drive.google.com/file/d/..."
+                        />
+                        <div style={{background:"#fff8e1",borderRadius:8,padding:"8px 10px",fontSize:10,color:"#8a6d00",marginTop:4}}>
+                          ⚠️ El archivo de Drive debe estar compartido como <strong>"Cualquier persona con el link"</strong>
+                        </div>
+                      </div>
+                      {/* Preview portada */}
+                      <div>
+                        <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:6}}>Vista previa de portada</div>
+                        {coverPreview
+                          ? <div style={{borderRadius:10,overflow:"hidden",border:"1.5px solid #e8e8e8"}}>
+                              <CoverImg url={coverPreview} h={165} r={0}/>
+                            </div>
+                          : <div style={{height:165,borderRadius:10,background:"#f0f0f0",border:"2px dashed #ddd",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6}}>
+                              <span style={{fontSize:26,opacity:.25}}>🖼️</span>
+                              <span style={{fontSize:10,color:"#ccc",textAlign:"center"}}>Pegá un link de Drive para ver la vista previa</span>
+                            </div>
+                        }
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Estado */}
+                <div style={{marginBottom:18}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#555",marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Estado</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {ST_OPT.map(s=>(
+                      <button key={s} onClick={()=>setForm(f=>({...f,status:s}))}
+                        style={{padding:"5px 13px",borderRadius:20,border:`1.5px solid ${form.status===s?"#1a1a1a":"#e0e0e0"}`,background:form.status===s?ST_CLR[s]:"#fafafa",fontWeight:form.status===s?700:400,fontSize:12,cursor:"pointer",color:form.status===s?ST_TXT[s]:"#888"}}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={onClose} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #e0e0e0",background:"#fafafa",cursor:"pointer",fontWeight:600,fontSize:13}}>Cancelar</button>
+                  <button onClick={()=>setTab("preview")} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #1a1a1a",background:"#fff",cursor:"pointer",fontWeight:600,fontSize:13}}>👁️ Preview</button>
+                  <button onClick={onSave} disabled={!form.title.trim()}
+                    style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:form.title.trim()?"#1a1a1a":"#ccc",color:"#fff",cursor:form.title.trim()?"pointer":"default",fontWeight:700,fontSize:13}}>
+                    {modal.editId?"Guardar cambios":"Agregar post"}
+                  </button>
+                </div>
+              </div>
+            ):(
+              /* PREVIEW */
+              <div style={{padding:"22px 26px"}}>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,fontWeight:700,marginBottom:4}}>Vista previa</div>
+                <div style={{fontSize:12,color:"#aaa",marginBottom:18}}>Simulación de cómo se verá en {PLAT[form.platform].label}</div>
+                <div style={{display:"grid",gridTemplateColumns:"auto 1fr",gap:18,alignItems:"start"}}>
+                  <div style={{border:"1px solid #e8e8e8",borderRadius:14,overflow:"hidden",background:"#fff",width:250}}>
+                    <div style={{padding:"9px 11px",display:"flex",alignItems:"center",gap:7,borderBottom:"1px solid #f5f5f5"}}>
+                      <div style={{width:26,height:26,borderRadius:"50%",background:PLAT[form.platform].bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,border:`2px solid ${PLAT[form.platform].color}`}}>{PLAT[form.platform].icon}</div>
+                      <div style={{fontSize:11,fontWeight:700}}>tu_cuenta</div>
+                    </div>
+                    {coverPreview&&<div style={{background:"#111"}}><CoverImg url={coverPreview} h={190} r={0}/></div>}
+                    <div style={{padding:"9px 11px"}}>
+                      {form.caption&&<div style={{fontSize:11,color:"#222",lineHeight:1.5,marginBottom:3}}>{form.caption}</div>}
+                      {form.hashtags&&<div style={{fontSize:10,color:"#0A66C2"}}>{form.hashtags}</div>}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{background:"#f7f7f7",borderRadius:12,padding:13,marginBottom:10}}>
+                      <div style={{fontSize:10,color:"#aaa",textTransform:"uppercase",letterSpacing:.5,marginBottom:7}}>Detalles</div>
+                      <div style={{fontSize:12,marginBottom:4}}><strong>Fecha:</strong> {`${String(modal.day).padStart(2,"0")}/${String(month+1).padStart(2,"0")}/${year}`}</div>
+                      <div style={{fontSize:12,marginBottom:4}}><strong>Red:</strong> {PLAT[form.platform].icon} {PLAT[form.platform].label}</div>
+                      <div style={{fontSize:12,marginBottom:8}}><strong>Tipo:</strong> {CT.find(c=>c.v===form.ctype)?.i} {CT.find(c=>c.v===form.ctype)?.l}</div>
+                      <span style={{padding:"3px 9px",borderRadius:20,background:ST_CLR[form.status],fontSize:10,fontWeight:700,color:ST_TXT[form.status]}}>{form.status}</span>
+                    </div>
+                    {form.driveUrl&&<div style={{background:"#f0fdf4",borderRadius:10,padding:"8px 10px",fontSize:11,marginBottom:6,color:"#166534"}}>✅ Imagen de Drive vinculada</div>}
+                    {form.coverDriveUrl&&<div style={{background:"#f0fdf4",borderRadius:10,padding:"8px 10px",fontSize:11,color:"#166534"}}>✅ Portada vinculada → aparecerá en el Feed</div>}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:20}}>
+                  <button onClick={()=>setTab("form")} style={{flex:1,padding:"10px",borderRadius:10,border:"1.5px solid #e0e0e0",background:"#fafafa",cursor:"pointer",fontWeight:600,fontSize:13}}>← Editar</button>
+                  <button onClick={onSave} disabled={!form.title.trim()}
+                    style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"#1a1a1a",color:"#fff",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                    {modal.editId?"Guardar cambios":"✓ Confirmar"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Detail modal ───────────────────────────────────────────────────────────
+  function Detail({post, onEdit, onDelete, onClose}) {
+    const pl=PLAT[post.platform], ct=CT.find(c=>c.v===post.ctype);
+    return (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:16}} onClick={onClose}>
+        <div style={{background:"#fff",borderRadius:18,width:"min(520px,96vw)",maxHeight:"90vh",overflow:"auto",boxShadow:"0 32px 80px rgba(0,0,0,.25)"}} onClick={e=>e.stopPropagation()}>
+          <div style={{padding:"22px"}}>
+            <div style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:12}}>
+              <div style={{width:34,height:34,borderRadius:"50%",background:pl.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,border:`2px solid ${pl.color}`,flexShrink:0}}>{pl.icon}</div>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,marginBottom:3}}>{post.title}</div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                  <span style={{fontSize:11,color:pl.color,fontWeight:600}}>{pl.label}</span>
+                  {ct&&<span style={{fontSize:10,color:"#aaa"}}>{ct.i} {ct.l}</span>}
+                  <span style={{padding:"2px 7px",borderRadius:20,background:ST_CLR[post.status],fontSize:10,fontWeight:600,color:ST_TXT[post.status]}}>{post.status}</span>
+                </div>
+              </div>
+              <span style={{fontSize:10,color:"#bbb",flexShrink:0}}>📅 {post.date}</span>
+            </div>
+
+            {(post.coverDriveUrl||post.driveUrl)&&(
+              <div style={{marginBottom:12,borderRadius:12,overflow:"hidden",border:"1px solid #ebebeb"}}>
+                <CoverImg url={post.coverDriveUrl||post.driveUrl} h={210} r={12}/>
+              </div>
+            )}
+
+            {(post.driveUrl||post.coverDriveUrl)&&(
+              <div style={{background:"#f7f7f7",borderRadius:10,padding:"9px 12px",marginBottom:10,fontSize:11}}>
+                {post.driveUrl&&<div style={{marginBottom:post.coverDriveUrl?5:0}}>
+                  <strong>🔗 Archivo:</strong> <a href={post.driveUrl} target="_blank" rel="noopener noreferrer" style={{color:"#0A66C2",wordBreak:"break-all"}}>{post.driveUrl.slice(0,55)}…</a>
+                </div>}
+                {post.coverDriveUrl&&<div>
+                  <strong>🎭 Portada:</strong> <a href={post.coverDriveUrl} target="_blank" rel="noopener noreferrer" style={{color:"#0A66C2",wordBreak:"break-all"}}>{post.coverDriveUrl.slice(0,55)}…</a>
+                </div>}
+              </div>
+            )}
+
+            {post.caption&&<div style={{fontSize:12,color:"#333",lineHeight:1.6,background:"#fafafa",borderRadius:8,padding:"9px 11px",marginBottom:7}}>{post.caption}</div>}
+            {post.hashtags&&<div style={{fontSize:11,color:"#0A66C2",marginBottom:12}}>{post.hashtags}</div>}
+
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>onDelete(post.id)} style={{flex:1,padding:"9px",borderRadius:10,border:"1.5px solid #ffcdd2",background:"#fff3f3",color:"#e53935",cursor:"pointer",fontWeight:600,fontSize:12}}>🗑️ Eliminar</button>
+              <button onClick={()=>onEdit(post)} style={{flex:2,padding:"9px",borderRadius:10,border:"none",background:"#1a1a1a",color:"#fff",cursor:"pointer",fontWeight:700,fontSize:12}}>✏️ Editar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── APP ────────────────────────────────────────────────────────────────────
+  function App() {
+    const today=new Date();
+    const [year,setYear]=useState(today.getFullYear());
+    const [month,setMonth]=useState(today.getMonth());
+    const [posts,setPosts]=useState(()=>ld(KP)||[]);
+    const [acc,setAcc]=useState(()=>ld(KA)||{instagram:"",linkedin:""});
+    const [modal,setModal]=useState(null);
+    const [form,setForm]=useState(EMPTY);
+    const [detail,setDetail]=useState(null);
+    const [filterP,setFilterP]=useState("all");
+    const [view,setView]=useState("calendario");
+    const [showSet,setShowSet]=useState(false);
+
+    useEffect(()=>sv(KP,posts),[posts]);
+    useEffect(()=>sv(KA,acc),[acc]);
+
+    const dim=daysIn(year,month), fd=firstOf(year,month);
+    const pfDay=day=>{
+      const ds=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+      return posts.filter(p=>p.date===ds&&(filterP==="all"||p.platform===filterP));
+    };
+    const openAdd=day=>{setForm(EMPTY);setModal({day});};
+    const openEdit=post=>{setDetail(null);setForm({platform:post.platform,title:post.title,caption:post.caption,status:post.status,hashtags:post.hashtags||"",ctype:post.ctype||"image",driveUrl:post.driveUrl||"",coverDriveUrl:post.coverDriveUrl||""});setModal({day:parseInt(post.date.split("-")[2]),editId:post.id});};
+    const save=()=>{if(!form.title.trim())return;const ds=`${year}-${String(month+1).padStart(2,"0")}-${String(modal.day).padStart(2,"0")}`;modal.editId?setPosts(p=>p.map(x=>x.id===modal.editId?{...x,...form,date:ds}:x)):setPosts(p=>[...p,{...form,date:ds,id:Date.now()}]);setModal(null);};
+    const del=id=>{setPosts(p=>p.filter(x=>x.id!==id));setDetail(null);};
+    const prev=()=>month===0?(setMonth(11),setYear(y=>y-1)):setMonth(m=>m-1);
+    const next=()=>month===11?(setMonth(0),setYear(y=>y+1)):setMonth(m=>m+1);
+    const mPosts=posts.filter(p=>{const d=new Date(p.date+"T00:00:00");return d.getFullYear()===year&&d.getMonth()===month;});
+
+    return (
+      <div style={{fontFamily:"'DM Sans',sans-serif",minHeight:"100vh",background:"#f7f6f2"}}>
+
+        {/* HEADER */}
+        <div style={{background:"#1a1a1a",color:"#fff",padding:"14px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",position:"sticky",top:0,zIndex:50,boxShadow:"0 2px 12px rgba(0,0,0,.3)"}}>
+          <div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:19,fontWeight:700}}>Planificador RRSS</div>
+            <div style={{fontSize:10,color:"#666",marginTop:1}}>Instagram · LinkedIn</div>
+          </div>
+          <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
+            {/* Vista tabs */}
+            <div style={{display:"flex",background:"#2a2a2a",borderRadius:22,padding:"3px",gap:2}}>
+              {[{id:"calendario",l:"📅 Calendario"},{id:"feed",l:"🖼️ Feed"}].map(v=>(
+                <button key={v.id} onClick={()=>setView(v.id)}
+                  style={{padding:"5px 13px",borderRadius:19,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:view===v.id?"#fff":"transparent",color:view===v.id?"#1a1a1a":"#777",transition:"all .2s"}}>
+                  {v.l}
+                </button>
+              ))}
+            </div>
+            {/* Filtro */}
+            {view==="calendario"&&(
+              <div style={{display:"flex",gap:3,background:"#2a2a2a",borderRadius:22,padding:"3px"}}>
+                {["all","instagram","linkedin"].map(p=>(
+                  <button key={p} onClick={()=>setFilterP(p)}
+                    style={{padding:"4px 10px",borderRadius:19,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,background:filterP===p?"#fff":"transparent",color:filterP===p?"#1a1a1a":"#777",transition:"all .2s"}}>
+                    {p==="all"?"Todas":PLAT[p].icon}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Links cuentas */}
+            {acc.instagram&&<a href={`https://instagram.com/${acc.instagram}`} target="_blank" rel="noopener noreferrer" style={{background:"#E1306C",color:"#fff",borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:700,textDecoration:"none"}}>📸 @{acc.instagram}</a>}
+            {acc.linkedin&&<a href={`https://linkedin.com/in/${acc.linkedin}`} target="_blank" rel="noopener noreferrer" style={{background:"#0A66C2",color:"#fff",borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:700,textDecoration:"none"}}>💼 @{acc.linkedin}</a>}
+            {/* Botón cuentas */}
+            <button onClick={()=>setShowSet(true)} style={{padding:"5px 10px",borderRadius:7,border:"1px solid #333",background:"transparent",color:"#999",fontSize:11,cursor:"pointer",fontWeight:600}}>
+              {acc.instagram||acc.linkedin?"⚙️ Cuentas":"🔗 Vincular"}
+            </button>
+            {/* Stats */}
+            <div style={{background:"#2a2a2a",borderRadius:7,padding:"5px 10px",fontSize:11,color:"#ccc"}}>
+              <span style={{color:"#fff",fontWeight:700}}>{mPosts.length}</span> · <span style={{color:"#4caf50",fontWeight:700}}>{mPosts.filter(p=>p.status==="Publicado").length}</span> pub.
+            </div>
+          </div>
+        </div>
+
+        {/* FEED */}
+        {view==="feed"&&<Feed posts={posts} acc={acc} onSelect={setDetail}/>}
+
+        {/* CALENDARIO */}
+        {view==="calendario"&&(
+          <div className="fade">
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:14,padding:"14px 24px 4px"}}>
+              <button onClick={prev} style={{background:"#fff",border:"1.5px solid #e0e0e0",borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
+              <div style={{fontFamily:"'Playfair Display',serif",fontSize:19,fontWeight:700,minWidth:185,textAlign:"center"}}>{MON[month]} {year}</div>
+              <button onClick={next} style={{background:"#fff",border:"1.5px solid #e0e0e0",borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
+            </div>
+            <div style={{padding:"8px 24px 26px"}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>
+                {DAYS.map(d=><div key={d} style={{textAlign:"center",fontSize:9,fontWeight:700,color:"#aaa",padding:"5px 0",textTransform:"uppercase",letterSpacing:1}}>{d}</div>)}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+                {Array.from({length:fd}).map((_,i)=><div key={`e${i}`} style={{minHeight:105}}/>)}
+                {Array.from({length:dim}).map((_,i)=>{
+                  const day=i+1, dp=pfDay(day), isT=today.getDate()===day&&today.getMonth()===month&&today.getFullYear()===year;
+                  return (
+                    <div key={day} style={{minHeight:105,background:"#fff",borderRadius:10,padding:"6px 5px",border:isT?"2px solid #1a1a1a":"1.5px solid #ebebeb",display:"flex",flexDirection:"column",gap:3,transition:"box-shadow .15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 14px rgba(0,0,0,.08)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:1}}>
+                        <span style={{fontSize:10,fontWeight:isT?700:500,background:isT?"#1a1a1a":"transparent",color:isT?"#fff":"#666",borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{day}</span>
+                        <button onClick={()=>openAdd(day)} style={{background:"none",border:"none",cursor:"pointer",color:"#ddd",fontSize:13,lineHeight:1,padding:0}}>+</button>
+                      </div>
+                      {dp.slice(0,3).map(post=>{
+                        const pl=PLAT[post.platform], ct=CT.find(c=>c.v===post.ctype);
+                        const thumb=resolve(post.coverDriveUrl||post.driveUrl);
+                        return (
+                          <div key={post.id} onClick={()=>setDetail(post)}
+                            style={{background:pl.bg,borderLeft:`3px solid ${pl.color}`,borderRadius:4,padding:"2px 4px",fontSize:9,fontWeight:500,cursor:"pointer",color:"#333",display:"flex",alignItems:"center",gap:3,overflow:"hidden"}}>
+                            {thumb
+                              ? <img src={thumb} alt="" style={{width:14,height:14,borderRadius:2,objectFit:"cover",flexShrink:0}} onError={e=>e.target.style.display="none"} crossOrigin="anonymous"/>
+                              : <span style={{flexShrink:0,fontSize:9}}>{ct?.i||pl.icon}</span>
+                            }
+                            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{post.title}</span>
+                          </div>
+                        );
+                      })}
+                      {dp.length>3&&<div style={{fontSize:8,color:"#bbb",textAlign:"center"}}>+{dp.length-3}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,padding:"0 24px 22px",flexWrap:"wrap"}}>
+              {ST_OPT.map(s=>(
+                <div key={s} style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:"#888"}}>
+                  <span style={{width:8,height:8,borderRadius:2,background:ST_CLR[s],border:"1px solid #ddd",display:"inline-block"}}/>
+                  {s}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {modal&&<PostModal modal={modal} month={month} year={year} form={form} setForm={setForm} onSave={save} onClose={()=>setModal(null)}/>}
+        {detail&&<Detail post={detail} onEdit={openEdit} onDelete={del} onClose={()=>setDetail(null)}/>}
+        {showSet&&<Settings acc={acc} onSave={a=>{setAcc(a);setShowSet(false);}} onClose={()=>setShowSet(false)}/>}
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
